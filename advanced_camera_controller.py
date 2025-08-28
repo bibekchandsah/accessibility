@@ -22,11 +22,22 @@ try:
 except ImportError:
     WIN10TOAST_AVAILABLE = False
 
+# Try to import system tray library
+try:
+    import pystray
+    from PIL import Image
+    PYSTRAY_AVAILABLE = True
+except ImportError:
+    PYSTRAY_AVAILABLE = False
+
 class AdvancedCameraController:
     def __init__(self, root):
         self.root = root
         self.root.title("Advanced Camera Controller")
-        self.root.geometry("705x690")
+        self.root.geometry("705x700")
+        
+        # Set window icon
+        self.set_window_icon()
         
         # Variables
         self.cameras = []
@@ -35,6 +46,10 @@ class AdvancedCameraController:
         self.auto_refresh = tk.BooleanVar(value=False)
         self.show_all_devices = tk.BooleanVar(value=False)
         self.is_admin = self.check_admin_privileges()
+        
+        # Camera references for tray menu callbacks
+        self.enable_camera_refs = []
+        self.disable_camera_refs = []
         
         # Settings file
         self.settings_file = "camera_settings.json"
@@ -52,6 +67,9 @@ class AdvancedCameraController:
         # Notification system
         self.setup_notifications()
         
+        # System tray
+        self.setup_system_tray()
+        
         # Show startup notification
         self.root.after(1000, lambda: self.show_startup_notification())
     
@@ -61,6 +79,28 @@ class AdvancedCameraController:
             return ctypes.windll.shell32.IsUserAnAdmin()
         except:
             return False
+    
+    def set_window_icon(self):
+        """Set the window icon"""
+        try:
+            if os.path.exists('camera.ico'):
+                self.root.iconbitmap('camera.ico')
+            elif os.path.exists('camera.png') and PYSTRAY_AVAILABLE:
+                # Convert PNG to PhotoImage for tkinter
+                img = Image.open('camera.png')
+                # Resize for window icon
+                img = img.resize((32, 32), Image.Resampling.LANCZOS)
+                # Convert to tkinter PhotoImage
+                import io
+                bio = io.BytesIO()
+                img.save(bio, format='PNG')
+                bio.seek(0)
+                photo = tk.PhotoImage(data=bio.getvalue())
+                self.root.iconphoto(True, photo)
+                # Keep a reference to prevent garbage collection
+                self.window_icon = photo
+        except Exception as e:
+            print(f"Could not set window icon: {e}")
     
     def setup_notifications(self):
         """Setup notification system"""
@@ -90,6 +130,366 @@ class AdvancedCameraController:
             message = "Ready in limited mode! Use Shift+Alt+E to enable cameras"
         
         self.show_notification("Camera Controller Started", message, "info")
+    
+    def setup_system_tray(self):
+        """Setup system tray icon and menu"""
+        if not PYSTRAY_AVAILABLE:
+            print("System tray not available. Install: pip install pystray Pillow")
+            self.tray_icon = None
+            return
+        
+        try:
+            # Load camera icon
+            if os.path.exists('camera.png'):
+                icon_image = Image.open('camera.png')
+            elif os.path.exists('camera.ico'):
+                icon_image = Image.open('camera.ico')
+            else:
+                # Create a simple default icon
+                icon_image = self.create_default_icon()
+            
+            # Create tray menu (will be updated dynamically)
+            self.create_tray_menu()
+            
+            # Create tray icon
+            self.tray_icon = pystray.Icon(
+                "camera_controller",
+                icon_image,
+                "Camera Controller",
+                self.tray_menu
+            )
+            
+            # Start tray icon in separate thread
+            self.tray_thread = threading.Thread(target=self.tray_icon.run, daemon=True)
+            self.tray_thread.start()
+            
+            # Minimize to tray option
+            self.root.protocol("WM_DELETE_WINDOW", self.on_window_close)
+            
+        except Exception as e:
+            print(f"Error setting up system tray: {e}")
+            self.tray_icon = None
+    
+    def create_default_icon(self):
+        """Create a simple default camera icon"""
+        from PIL import Image, ImageDraw
+        
+        size = 32
+        img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        
+        # Camera body
+        draw.rectangle([4, 10, 28, 24], fill=(64, 64, 64, 255), outline=(32, 32, 32, 255))
+        # Camera lens
+        draw.ellipse([10, 13, 22, 21], fill=(128, 128, 128, 255), outline=(96, 96, 96, 255))
+        # Lens center
+        draw.ellipse([13, 15, 19, 19], fill=(192, 192, 192, 255))
+        # Flash
+        draw.rectangle([6, 8, 10, 10], fill=(255, 255, 255, 255))
+        
+        return img
+    
+    def create_tray_menu(self):
+        """Create the system tray menu with dynamic camera lists"""
+        # Create enable camera submenu
+        enable_submenu = self.build_enable_camera_submenu()
+        
+        # Create disable camera submenu  
+        disable_submenu = self.build_disable_camera_submenu()
+        
+        self.tray_menu = pystray.Menu(
+            pystray.MenuItem("Camera Controller", self.show_main_window, default=True),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Enable All Cameras", self.tray_enable_all),
+            pystray.MenuItem("Disable All Cameras", self.tray_disable_all),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Enable Camera", enable_submenu),
+            pystray.MenuItem("Disable Camera", disable_submenu),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Quick Actions", pystray.Menu(
+                pystray.MenuItem("Test Camera", self.tray_test_camera),
+                pystray.MenuItem("Refresh Camera List", self.tray_refresh_cameras),
+                pystray.MenuItem("Open Device Manager", self.tray_open_device_manager),
+                pystray.MenuItem("Open Camera Settings", self.tray_open_camera_settings)
+            )),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Show Notifications", self.toggle_notifications_tray, 
+                           checked=lambda item: self.notifications_enabled.get()),
+            pystray.MenuItem("Auto-refresh", self.toggle_auto_refresh_tray,
+                           checked=lambda item: self.auto_refresh.get()),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Contributor", self.open_contributor_link),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Exit", self.quit_application)
+        )
+    
+    def build_enable_camera_submenu(self):
+        """Build submenu for enabling individual cameras"""
+        if not self.cameras:
+            return pystray.Menu(
+                pystray.MenuItem("No cameras found", None, enabled=False),
+                pystray.MenuItem("Refresh camera list", self.tray_refresh_cameras)
+            )
+        
+        # Get disabled cameras
+        disabled_cameras = [c for c in self.cameras if c['status'] != 'OK']
+        
+        if not disabled_cameras:
+            return pystray.Menu(
+                pystray.MenuItem("All cameras are enabled", None, enabled=False),
+                pystray.MenuItem("Refresh camera list", self.tray_refresh_cameras)
+            )
+        
+        # Store camera references for menu callbacks
+        self.enable_camera_refs = disabled_cameras
+        
+        # Create menu items for each disabled camera
+        menu_items = []
+        for i, camera in enumerate(disabled_cameras):
+            # Truncate long camera names for menu display
+            display_name = camera['name']
+            if len(display_name) > 40:
+                display_name = display_name[:37] + "..."
+            
+            # Create callback function with proper closure
+            def make_enable_callback(camera_index):
+                def callback(icon, item):
+                    if camera_index < len(self.enable_camera_refs):
+                        self.tray_enable_specific_camera(self.enable_camera_refs[camera_index])
+                return callback
+            
+            menu_items.append(
+                pystray.MenuItem(f"✓ {display_name}", make_enable_callback(i))
+            )
+        
+        # Add refresh option
+        menu_items.append(pystray.Menu.SEPARATOR)
+        menu_items.append(pystray.MenuItem("Refresh camera list", self.tray_refresh_cameras))
+        
+        return pystray.Menu(*menu_items)
+    
+    def build_disable_camera_submenu(self):
+        """Build submenu for disabling individual cameras"""
+        if not self.is_admin:
+            return pystray.Menu(
+                pystray.MenuItem("Administrator privileges required", None, enabled=False),
+                pystray.MenuItem("Restart as Administrator", self.restart_as_admin)
+            )
+        
+        if not self.cameras:
+            return pystray.Menu(
+                pystray.MenuItem("No cameras found", None, enabled=False),
+                pystray.MenuItem("Refresh camera list", self.tray_refresh_cameras)
+            )
+        
+        # Get enabled cameras
+        enabled_cameras = [c for c in self.cameras if c['status'] == 'OK']
+        
+        if not enabled_cameras:
+            return pystray.Menu(
+                pystray.MenuItem("All cameras are disabled", None, enabled=False),
+                pystray.MenuItem("Refresh camera list", self.tray_refresh_cameras)
+            )
+        
+        # Store camera references for menu callbacks
+        self.disable_camera_refs = enabled_cameras
+        
+        # Create menu items for each enabled camera
+        menu_items = []
+        for i, camera in enumerate(enabled_cameras):
+            # Truncate long camera names for menu display
+            display_name = camera['name']
+            if len(display_name) > 40:
+                display_name = display_name[:37] + "..."
+            
+            # Create callback function with proper closure
+            def make_disable_callback(camera_index):
+                def callback(icon, item):
+                    if camera_index < len(self.disable_camera_refs):
+                        self.tray_disable_specific_camera(self.disable_camera_refs[camera_index])
+                return callback
+            
+            menu_items.append(
+                pystray.MenuItem(f"✗ {display_name}", make_disable_callback(i))
+            )
+        
+        # Add refresh option
+        menu_items.append(pystray.Menu.SEPARATOR)
+        menu_items.append(pystray.MenuItem("Refresh camera list", self.tray_refresh_cameras))
+        
+        return pystray.Menu(*menu_items)
+    
+    def tray_enable_specific_camera(self, camera):
+        """Enable a specific camera from tray menu"""
+        def enable_thread():
+            success = self.change_device_state(camera['instance_id'], enable=True)
+            if success:
+                self.show_notification("Camera Enabled", f"✓ {camera['name']} is now enabled", "info")
+            else:
+                self.show_notification("Enable Failed", f"✗ Could not enable {camera['name']}", "warning")
+            self.root.after(0, self.refresh_cameras)
+        
+        threading.Thread(target=enable_thread, daemon=True).start()
+    
+    def tray_disable_specific_camera(self, camera):
+        """Disable a specific camera from tray menu"""
+        def disable_thread():
+            success = self.change_device_state(camera['instance_id'], enable=False)
+            if success:
+                self.show_notification("Camera Disabled", f"✗ {camera['name']} is now disabled", "info")
+            else:
+                self.show_notification("Disable Failed", f"✗ Could not disable {camera['name']}", "warning")
+            self.root.after(0, self.refresh_cameras)
+        
+        threading.Thread(target=disable_thread, daemon=True).start()
+    
+    def tray_open_device_manager(self, icon=None, item=None):
+        """Open Device Manager from tray"""
+        try:
+            subprocess.run(["devmgmt.msc"], shell=True)
+            self.show_notification("Camera Controller", "Opened Device Manager", "info")
+        except Exception as e:
+            self.show_notification("Error", "Could not open Device Manager", "warning")
+    
+    def tray_open_camera_settings(self, icon=None, item=None):
+        """Open Camera settings from tray"""
+        try:
+            subprocess.run(["start", "ms-settings:privacy-webcam"], shell=True)
+            self.show_notification("Camera Controller", "Opened Camera privacy settings", "info")
+        except Exception as e:
+            try:
+                subprocess.run(["start", "ms-settings:privacy"], shell=True)
+                self.show_notification("Camera Controller", "Opened Privacy settings", "info")
+            except:
+                self.show_notification("Error", "Could not open Camera settings", "warning")
+    
+    def show_main_window(self, icon=None, item=None):
+        """Show the main window"""
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+    
+    def on_window_close(self):
+        """Handle window close - minimize to tray instead of exit"""
+        if self.tray_icon:
+            self.root.withdraw()  # Hide window
+            self.show_notification("Camera Controller", "Minimized to system tray", "info")
+        else:
+            self.quit_application()
+    
+    def tray_enable_all(self, icon=None, item=None):
+        """Enable all cameras from tray"""
+        if not self.cameras:
+            self.refresh_cameras()
+            self.root.after(1000, lambda: self.tray_enable_all())
+            return
+        
+        disabled_cameras = [c for c in self.cameras if c['status'] != 'OK']
+        if not disabled_cameras:
+            self.show_notification("Camera Controller", "All cameras are already enabled", "info")
+            return
+        
+        def enable_thread():
+            success_count = 0
+            for camera in disabled_cameras:
+                try:
+                    if self.change_device_state(camera['instance_id'], enable=True):
+                        success_count += 1
+                    time.sleep(0.5)
+                except:
+                    continue
+            
+            self.show_notification("Bulk Enable Complete", f"✓ Enabled {success_count}/{len(disabled_cameras)} cameras", "info")
+            self.root.after(0, self.refresh_cameras)
+        
+        threading.Thread(target=enable_thread, daemon=True).start()
+    
+    def tray_disable_all(self, icon=None, item=None):
+        """Disable all cameras from tray"""
+        if not self.is_admin:
+            self.show_notification("Administrator Required", "Need admin privileges to disable cameras", "warning")
+            return
+        
+        if not self.cameras:
+            self.refresh_cameras()
+            self.root.after(1000, lambda: self.tray_disable_all())
+            return
+        
+        enabled_cameras = [c for c in self.cameras if c['status'] == 'OK']
+        if not enabled_cameras:
+            self.show_notification("Camera Controller", "All cameras are already disabled", "info")
+            return
+        
+        def disable_thread():
+            success_count = 0
+            for camera in enabled_cameras:
+                try:
+                    if self.change_device_state(camera['instance_id'], enable=False):
+                        success_count += 1
+                    time.sleep(0.5)
+                except:
+                    continue
+            
+            self.show_notification("Bulk Disable Complete", f"✗ Disabled {success_count}/{len(enabled_cameras)} cameras", "info")
+            self.root.after(0, self.refresh_cameras)
+        
+        threading.Thread(target=disable_thread, daemon=True).start()
+    
+
+    
+    def tray_test_camera(self, icon=None, item=None):
+        """Test camera from tray"""
+        try:
+            subprocess.run(["start", "microsoft.windows.camera:"], shell=True)
+            self.show_notification("Camera Controller", "Opened Camera app for testing", "info")
+        except Exception as e:
+            self.show_notification("Error", "Could not open Camera app", "warning")
+    
+    def tray_refresh_cameras(self, icon=None, item=None):
+        """Refresh camera list from tray"""
+        self.refresh_cameras()
+        self.show_notification("Camera Controller", "Camera list refreshed", "info")
+    
+    def update_tray_menu(self):
+        """Update the tray menu when camera list changes"""
+        if self.tray_icon:
+            try:
+                # Recreate the menu with updated camera list
+                self.create_tray_menu()
+                self.tray_icon.menu = self.tray_menu
+            except Exception as e:
+                print(f"Error updating tray menu: {e}")
+    
+    def toggle_notifications_tray(self, icon=None, item=None):
+        """Toggle notifications from tray"""
+        self.notifications_enabled.set(not self.notifications_enabled.get())
+        self.save_settings()
+        if self.notifications_enabled.get():
+            self.show_notification("Camera Controller", "Notifications enabled", "info")
+    
+    def toggle_auto_refresh_tray(self, icon=None, item=None):
+        """Toggle auto-refresh from tray"""
+        self.auto_refresh.set(not self.auto_refresh.get())
+        self.save_settings()
+        status = "enabled" if self.auto_refresh.get() else "disabled"
+        self.show_notification("Camera Controller", f"Auto-refresh {status}", "info")
+    
+    def open_contributor_link(self, icon=None, item=None):
+        """Open the contributor GitHub repository"""
+        try:
+            import webbrowser
+            webbrowser.open("https://github.com/bibekchandsah/accessibility")
+            self.show_notification("Camera Controller", "Opened contributor repository", "info")
+        except Exception as e:
+            self.show_notification("Error", "Could not open contributor link", "warning")
+    
+    def quit_application(self, icon=None, item=None):
+        """Quit the application completely"""
+        if self.tray_icon:
+            self.tray_icon.stop()
+        self.save_settings()
+        self.root.quit()
+        self.root.destroy()
     
     def show_notification(self, title, message, icon_type="info"):
         """Show system notification"""
@@ -145,13 +545,15 @@ class AdvancedCameraController:
         self.root.bind('<Shift-Alt-KeyPress-E>', lambda e: self.shortcut_enable_camera())
         self.root.bind('<Shift-Alt-KeyPress-d>', lambda e: self.shortcut_disable_camera())
         self.root.bind('<Shift-Alt-KeyPress-D>', lambda e: self.shortcut_disable_camera())
+        self.root.bind('<Control-KeyPress-g>', lambda e: self.open_contributor_link())
+        self.root.bind('<Control-KeyPress-G>', lambda e: self.open_contributor_link())
         
         # Make sure the window can receive focus for shortcuts
         self.root.focus_set()
         
         # Add shortcuts info to title
         original_title = self.root.title()
-        self.root.title(f"{original_title} - Shortcuts: Shift+Alt+E (Enable), Shift+Alt+D (Disable)")
+        self.root.title(f"{original_title} - Shortcuts: Shift+Alt+E/D (Camera), Ctrl+G (GitHub)")
     
     def shortcut_enable_camera(self):
         """Enable camera via keyboard shortcut"""
@@ -208,6 +610,12 @@ class AdvancedCameraController:
         admin_text = "🔒 Administrator" if self.is_admin else "⚠️ Limited Mode"
         admin_color = "green" if self.is_admin else "orange"
         ttk.Label(status_frame, text=admin_text, foreground=admin_color, 
+                 font=("Arial", 9)).pack(anchor=tk.E)
+        
+        # Tray status
+        tray_text = "📍 System Tray" if PYSTRAY_AVAILABLE else "📍 No Tray"
+        tray_color = "blue" if PYSTRAY_AVAILABLE else "gray"
+        ttk.Label(status_frame, text=tray_text, foreground=tray_color, 
                  font=("Arial", 9)).pack(anchor=tk.E)
         
         self.status_label = ttk.Label(status_frame, text="Ready", foreground="green")
@@ -307,25 +715,29 @@ class AdvancedCameraController:
                   command=self.open_device_manager).pack(side=tk.LEFT, padx=3)
         ttk.Button(secondary_frame, text="Privacy Settings", width=15,
                   command=self.open_camera_settings).pack(side=tk.LEFT, padx=3)
+        ttk.Button(secondary_frame, text="Contributor", width=12,
+                  command=self.open_contributor_link).pack(side=tk.LEFT, padx=3)
         
         # Info frame
         info_frame = ttk.LabelFrame(main_frame, text="Information", padding="10")
         info_frame.pack(fill=tk.X)
         
+        tray_info = "• System tray: Right-click tray icon for quick actions\n• Close window minimizes to tray" if PYSTRAY_AVAILABLE else "• Install pystray for system tray support"
+        
         if self.is_admin:
-            info_text = """💡 Tips & Shortcuts:
+            info_text = f"""💡 Tips & Shortcuts:
 • Full device control available (Administrator mode)
-• Keyboard shortcuts: Shift+Alt+E (Enable), Shift+Alt+D (Disable)
+• Keyboard shortcuts: Shift+Alt+E (Enable), Shift+Alt+D (Disable), Ctrl+G (GitHub)
 • Notifications show camera status changes
-• Use 'Test Camera' to verify camera functionality
-• Check Device Manager if cameras don't appear"""
-        else:
-            info_text = """⚠️ Limited Mode (Not Administrator):
-• Can view and enable cameras
-• Keyboard shortcuts: Shift+Alt+E (Enable only)
-• Cannot disable cameras (requires Administrator privileges)
-• Right-click this app → "Run as administrator" for full control
+{tray_info}
 • Use 'Test Camera' to verify camera functionality"""
+        else:
+            info_text = f"""⚠️ Limited Mode (Not Administrator):
+• Can view and enable cameras
+• Keyboard shortcuts: Shift+Alt+E (Enable), Ctrl+G (GitHub)
+• Cannot disable cameras (requires Administrator privileges)
+{tray_info}
+• Right-click this app → "Run as administrator" for full control"""
         
         ttk.Label(info_frame, text=info_text, font=("Arial", 8), 
                  justify=tk.LEFT).pack(anchor=tk.W)
@@ -334,6 +746,15 @@ class AdvancedCameraController:
         if not self.is_admin:
             ttk.Button(info_frame, text="🔒 Restart as Administrator", 
                       command=self.restart_as_admin).pack(pady=(10, 0))
+        
+        # About section
+        about_frame = ttk.Frame(info_frame)
+        about_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        ttk.Label(about_frame, text="Advanced Camera Controller", 
+                 font=("Arial", 8, "bold")).pack(side=tk.LEFT)
+        ttk.Button(about_frame, text="View on GitHub", 
+                  command=self.open_contributor_link).pack(side=tk.RIGHT)
     
     def load_settings(self):
         """Load settings from file"""
@@ -534,6 +955,9 @@ class AdvancedCameraController:
         
         # Clear details
         self.details_text.delete(1.0, tk.END)
+        
+        # Update tray menu with new camera list
+        self.update_tray_menu()
     
     def on_camera_select(self, event):
         """Handle camera selection"""
@@ -1253,12 +1677,13 @@ def main():
     y = (root.winfo_screenheight() // 2) - (root.winfo_height() // 2)
     root.geometry(f"+{x}+{y}")
     
-    # Save settings on close
-    def on_closing():
-        app.save_settings()
-        root.destroy()
-    
-    root.protocol("WM_DELETE_WINDOW", on_closing)
+    # The window close handler is set up in setup_system_tray()
+    # If no tray icon, use default close behavior
+    if not hasattr(app, 'tray_icon') or not app.tray_icon:
+        def on_closing():
+            app.save_settings()
+            root.destroy()
+        root.protocol("WM_DELETE_WINDOW", on_closing)
     root.mainloop()
 
 if __name__ == "__main__":

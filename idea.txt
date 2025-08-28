@@ -11,3 +11,9 @@ git push -u origin main
 git remote add origin https://github.com/bibekchandsah/accessibility.git
 git branch -M main
 git push -u origin main
+
+
+
+
+open setting should open sound setting in window 
+https://github.com/bibekchandsah/accessibility
