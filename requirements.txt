@@ -1,0 +1,5 @@
+pycaw
+# Camera controller optional dependencies for enhanced features
+plyer  # For cross-platform notifications
+win10toast  # For Windows 10/11 toast notifications>=20220416
+comtypes>=1.1.14
