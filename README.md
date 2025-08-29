@@ -52,13 +52,7 @@ Python GUI applications to control microphone volume and camera devices on Windo
 
 ### Camera Controllers
 
-#### 2. `camera_controller.py`
-- Basic camera enable/disable functionality
-- Simple GUI for camera management
-- PowerShell-based device control
-- No additional dependencies required
-
-#### 3. `advanced_camera_controller.py` ⭐ **Recommended**
+#### 3. `advanced_camera_controller.py`
 - **Complete camera management solution**
 - Enable/disable individual or all cameras
 - Auto-refresh camera list every 5 seconds
@@ -72,10 +66,7 @@ Python GUI applications to control microphone volume and camera devices on Windo
 
 ### For Camera Control (No Dependencies)
 ```bash
-# Basic camera controller
-python camera_controller.py
-
-# Advanced camera controller (recommended)
+# Advanced camera controller
 python advanced_camera_controller.py
 ```
 
