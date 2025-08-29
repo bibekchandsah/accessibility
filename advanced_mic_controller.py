@@ -34,6 +34,44 @@ class AdvancedMicController:
         
         self.setup_ui()
         self.update_volume_display()
+    
+    def setup_dialog_window(self, dialog_window, title, width=500, height=400):
+        """Helper method to setup dialog windows with proper icon and centering"""
+        dialog_window.title(title)
+        dialog_window.geometry(f"{width}x{height}")
+        dialog_window.transient(self.root)
+        dialog_window.grab_set()
+        
+        # Set icon for dialog window
+        try:
+            import os
+            if os.path.exists('microphone.ico'):
+                dialog_window.iconbitmap('microphone.ico')
+            elif os.path.exists('microphone.png'):
+                try:
+                    icon_image = tk.PhotoImage(file='microphone.png')
+                    dialog_window.iconphoto(True, icon_image)
+                except:
+                    pass
+        except:
+            pass
+        
+        # Center the dialog window properly
+        dialog_window.update_idletasks()
+        
+        # Get screen dimensions
+        screen_width = dialog_window.winfo_screenwidth()
+        screen_height = dialog_window.winfo_screenheight()
+        
+        # Calculate center position
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        
+        # Ensure window doesn't go off screen
+        x = max(0, min(x, screen_width - width))
+        y = max(0, min(y, screen_height - height))
+        
+        dialog_window.geometry(f"{width}x{height}+{x}+{y}")
         
     def init_audio_interface(self):
         """Initialize audio interface using pycaw"""
@@ -299,17 +337,10 @@ class AdvancedMicController:
         """Try to detect and switch to external microphone with progress dialog"""
         # Create progress dialog
         progress_window = tk.Toplevel(self.root)
-        progress_window.title("Detecting Microphones...")
-        progress_window.geometry("450x300")
         progress_window.resizable(False, False)
-        progress_window.transient(self.root)
-        progress_window.grab_set()
         
-        # Center the window
-        progress_window.geometry("+%d+%d" % (
-            self.root.winfo_rootx() + 50,
-            self.root.winfo_rooty() + 50
-        ))
+        # Setup dialog with proper icon and centering
+        self.setup_dialog_window(progress_window, "Detecting Microphones...", 500, 400)
         
         # Progress UI
         ttk.Label(progress_window, text="Scanning for microphone devices...", 
@@ -544,13 +575,10 @@ class AdvancedMicController:
     def show_device_selection(self, devices):
         """Show a dialog to select microphone device"""
         selection_window = tk.Toplevel(self.root)
-        selection_window.title("Select Microphone Device")
-        selection_window.geometry("500x400")
         selection_window.resizable(True, True)
         
-        # Center the window
-        selection_window.transient(self.root)
-        selection_window.grab_set()
+        # Setup dialog with proper icon and centering
+        self.setup_dialog_window(selection_window, "Select Microphone Device", 500, 400)
         
         ttk.Label(selection_window, text="Available Microphone Devices:", 
                  font=("Arial", 12, "bold")).pack(pady=10)
@@ -780,20 +808,24 @@ If no external mic appears, your earphones may not have a microphone.""")
         """Open Windows Sound Settings"""
         try:
             import subprocess
-            # Open Windows Sound Settings directly
-            subprocess.run(["ms-settings:sound"], shell=True)
+            # Open Windows Sound Settings directly to System > Sound
+            subprocess.run(["start", "ms-settings:sound"], shell=True, check=True)
         except Exception as e:
             try:
                 # Fallback: Open Sound Control Panel
-                subprocess.run(["control", "mmsys.cpl"], shell=True)
+                subprocess.run(["control", "mmsys.cpl"], shell=True, check=True)
             except Exception as e2:
-                messagebox.showinfo("Manual Instructions", 
-                                  "Please manually open Sound Settings:\n\n"
-                                  "1. Right-click the sound icon in your taskbar\n"
-                                  "2. Select 'Open Sound settings'\n"
-                                  "3. Click 'More sound settings'\n"
-                                  "4. Go to the 'Recording' tab\n"
-                                  "5. Set your desired microphone as default")
+                try:
+                    # Alternative fallback: Use explorer to open settings
+                    subprocess.run(["explorer", "ms-settings:sound"], shell=True, check=True)
+                except Exception as e3:
+                    messagebox.showinfo("Manual Instructions", 
+                                      "Please manually open Sound Settings:\n\n"
+                                      "1. Right-click the sound icon in your taskbar\n"
+                                      "2. Select 'Open Sound settings'\n"
+                                      "3. Click 'More sound settings'\n"
+                                      "4. Go to the 'Recording' tab\n"
+                                      "5. Set your desired microphone as default")
     
 
     
@@ -919,6 +951,22 @@ If no external mic appears, your earphones may not have a microphone.""")
 
 def main():
     root = tk.Tk()
+    
+    # Set window and program icon
+    try:
+        import os
+        # Try ICO first (preferred for Windows), then PNG
+        if os.path.exists('microphone.ico'):
+            root.iconbitmap('microphone.ico')
+        elif os.path.exists('microphone.png'):
+            try:
+                # Convert PNG to PhotoImage for tkinter
+                icon_image = tk.PhotoImage(file='microphone.png')
+                root.iconphoto(True, icon_image)
+            except Exception as png_error:
+                print(f"Could not load PNG icon: {png_error}")
+    except Exception as e:
+        print(f"Could not set icon: {e}")
     
     if not PYCAW_AVAILABLE:
         response = messagebox.askyesno(

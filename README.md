@@ -31,6 +31,14 @@ Python GUI applications to control microphone volume and camera devices on Windo
 - **Testing Tools**: Quick access to camera testing applications
 - **Privacy Controls**: Easy access to Windows camera settings
 
+## Preview
+
+### Camera Controller Interface
+![Camera Controller Preview](camera%20preview.png)
+
+### Microphone Controller Interface
+![Microphone Controller Preview](microphone%20preview.png)
+
 ## Applications Included
 
 ### Microphone Controllers
